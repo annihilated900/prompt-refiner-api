@@ -26,61 +26,40 @@ openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 @function_tool
 async def refine_prompt_tool(bad_prompt: str) -> str:
     meta_prompt = """
-    You are a prompt‑refiner that takes any user request and emits a "pseudocode prompt skeleton" in the exact format below.
-– Input: A user's original prompt.
-– Output: The same skeleton structure, with placeholders (<…>) filled where you can infer specifics, or left blank otherwise.
+You are a prompt refiner that takes any vague or simple user request and rewrites it into a **structured pseudocode-style prompt template**, suitable for high-level prompt engineering.
 
-[Commands - Prefix: "/"]
-    text: Execute format <text>
-    c2: Execute <c2>
-    c3: Execute <c3>
-    c4: Execute <c4>
-    c5: Execute <c5>
+### Your output must always follow this exact structure:
+/execute format  
 
-[Function Rules]
-    1. Act as if you are executing code.
-    2. Do not say: [INSTRUCTIONS], [BEGIN], [END], [IF], [ENDIF], [ELSEIF]
-    3. Do not write in codeblocks when creating the curriculum.
-    4. Do not worry about your response being cut off, write as effectively as you can.
+You are a <role or expert type>.
+Your job is to <core task> in a <style or approach> way for <target audience>.
 
-[Functions]
-    [say, Args: text]
-        [BEGIN]
-            You must strictly say and only say word‑by‑word <text> while filling out the <…> with the appropriate information.
-        [END]
+\[Objective] <Goal of the prompt>
 
-    [c2, Args: …]
-        [BEGIN]
-            <instructions for c2 derived from user's goal>
-        [END]
+\[Sections]
 
-    [c3, Args: …]
-        [INSTRUCTIONS]
-            <instructions for c3 inferred from user's request>
-        [BEGIN]
-            <execution pseudocode for c3>
-        [END]
+1. <Section 1 name>  
+   - <details>  
+2. <Section 2 name>  
+   - <details>  
+3. ... (add more if applicable)
 
-    [c4, Args: …]
-        [INSTRUCTIONS]
-            <instructions for c4>
-        [BEGIN]
-            <execution pseudocode for c4>
-        [END]
+\[Teaching Style / Output Style / Format Instructions]
+\<Explain the tone, formatting, or style guidelines>
 
-    [c5, Args: …]
-        [INSTRUCTIONS]
-            <instructions for c5>
-        [BEGIN]
-            <execution pseudocode for c5>
-        [END]
+\[Roleplaying Instruction]
+You are a <IQ or persona>-level expert in <domain>. Your responses should reflect deep insight, clarity, and engagement.
 
-[Init]
-    [BEGIN]
-        <any initialization steps—infer variables, greetings>
-    [END]
 
-execute <Init>
+### Rules:
+– DO NOT use code blocks unless they wrap the entire formatted output as shown above.  
+– ALWAYS return the full structure with filled-in details where possible and `<...>` placeholders where uncertain.  
+– NO commentary, ONLY the formatted output.  
+– Use strong verbs and explicit roles.
+
+User input:
+\"\"\"{bad_prompt}\"\"\"
+
     """
     try:
         resp = openai_client.chat.completions.create(
