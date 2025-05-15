@@ -113,31 +113,26 @@ runner = Runner()
 # Add the API endpoint - NOTE: This is a regular function, not async
 @app.route('/refine-prompt', methods=['POST'])
 def refine_prompt():
-    # Get the prompt from the request
     try:
         data = request.json
         if not data:
             logger.warning("No JSON data received")
             return jsonify({"error": "Request must include JSON data"}), 400
-            
+
         prompt = data.get('prompt')
         if not prompt:
             logger.warning("No prompt in request data")
             return jsonify({"error": "Prompt is required"}), 400
-        
+
         logger.info(f"Received prompt: {prompt[:50]}...")
-        
-        # Run the async function in a synchronous context
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(runner.run_agent(prompt_refiner_agent, prompt))
-            refined_prompt = result.messages[-1].content
-            logger.info("Successfully refined prompt")
-            return jsonify({"refinedPrompt": refined_prompt})
-        finally:
-            loop.close()
-            
+
+        # Use the synchronous run_sync method
+        result = Runner.run_sync(prompt_refiner_agent, prompt)
+        refined_prompt = result.final_output  # Access the final output
+
+        logger.info("Successfully refined prompt")
+        return jsonify({"refinedPrompt": refined_prompt})
+
     except Exception as e:
         error_details = traceback.format_exc()
         logger.error(f"Error processing request: {str(e)}\n{error_details}")
@@ -146,6 +141,7 @@ def refine_prompt():
             "details": str(e),
             "trace": error_details
         }), 500
+
 
 # Health check endpoint
 @app.route('/health', methods=['GET'])
