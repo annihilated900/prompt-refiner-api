@@ -1,22 +1,33 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
 import asyncio
-from openai import OpenAI, AsyncOpenAI
-from agents import Agent, Runner, function_tool
+from openai import OpenAI
+from agents import Agent, Runner, function_tool, ModelSettings
 from dotenv import load_dotenv
+import logging
+import traceback
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
 # Initialize the Flask app
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
-# Define your agent code (from your provided example)
+# Initialize OpenAI client once
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Define your agent code
 @function_tool
 async def refine_prompt_tool(bad_prompt: str) -> str:
     meta_prompt = """
-    You are a prompt‑refiner that takes any user request and emits a “pseudocode prompt skeleton” in the exact format below.
-– Input: A user’s original prompt.
+    You are a prompt‑refiner that takes any user request and emits a "pseudocode prompt skeleton" in the exact format below.
+– Input: A user's original prompt.
 – Output: The same skeleton structure, with placeholders (<…>) filled where you can infer specifics, or left blank otherwise.
 
 [Commands - Prefix: "/"]
@@ -40,12 +51,12 @@ async def refine_prompt_tool(bad_prompt: str) -> str:
 
     [c2, Args: …]
         [BEGIN]
-            <instructions for c2 derived from user’s goal>
+            <instructions for c2 derived from user's goal>
         [END]
 
     [c3, Args: …]
         [INSTRUCTIONS]
-            <instructions for c3 inferred from user’s request>
+            <instructions for c3 inferred from user's request>
         [BEGIN]
             <execution pseudocode for c3>
         [END]
@@ -71,19 +82,20 @@ async def refine_prompt_tool(bad_prompt: str) -> str:
 
 execute <Init>
     """
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": meta_prompt},
-            {"role": "user",   "content": bad_prompt}
-        ]
-    )
-    return resp.choices[0].message.content
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": meta_prompt},
+                {"role": "user", "content": bad_prompt}
+            ]
+        )
+        return resp.choices[0].message.content
+    except Exception as e:
+        logger.error(f"OpenAI API error: {str(e)}")
+        raise Exception(f"Error calling OpenAI API: {str(e)}")
 
 # Initialize your agent
-from agents import ModelSettings
-
 prompt_refiner_agent = Agent(
     name="Prompt Refiner",
     instructions=(
@@ -98,26 +110,51 @@ prompt_refiner_agent = Agent(
 # Create a runner for the agent
 runner = Runner()
 
-# Add the API endpoint
+# Add the API endpoint - NOTE: This is a regular function, not async
 @app.route('/refine-prompt', methods=['POST'])
-async def refine_prompt():
+def refine_prompt():
     # Get the prompt from the request
-    data = request.json
-    prompt = data.get('prompt')
-    
-    if not prompt:
-        return jsonify({"error": "Prompt is required"}), 400
-    
-    # Call the agent to refine the prompt
     try:
-        result = await runner.run_agent(prompt_refiner_agent, prompt)
-        refined_prompt = result.messages[-1].content
-        return jsonify({"refinedPrompt": refined_prompt})
+        data = request.json
+        if not data:
+            logger.warning("No JSON data received")
+            return jsonify({"error": "Request must include JSON data"}), 400
+            
+        prompt = data.get('prompt')
+        if not prompt:
+            logger.warning("No prompt in request data")
+            return jsonify({"error": "Prompt is required"}), 400
+        
+        logger.info(f"Received prompt: {prompt[:50]}...")
+        
+        # Run the async function in a synchronous context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(runner.run_agent(prompt_refiner_agent, prompt))
+            refined_prompt = result.messages[-1].content
+            logger.info("Successfully refined prompt")
+            return jsonify({"refinedPrompt": refined_prompt})
+        finally:
+            loop.close()
+            
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"error": str(e)}), 500
+        error_details = traceback.format_exc()
+        logger.error(f"Error processing request: {str(e)}\n{error_details}")
+        return jsonify({
+            "error": "Failed to process prompt",
+            "details": str(e),
+            "trace": error_details
+        }), 500
+
+# Health check endpoint
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "healthy"}), 200
 
 # Run the Flask app
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')
+    logger.info(f"Starting Flask app on port {port}, debug={debug_mode}")
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
